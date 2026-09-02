@@ -1,2 +1,2 @@
 run:
-	CompileDaemon -build="go build -o main" -command="./main"
+	CompileDaemon -build="go build -o lsm-tree" -command="./lsm-tree"
