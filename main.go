@@ -21,31 +21,37 @@ func execCommand(db database.Database, command string) {
 	switch args[0] {
 	case "set":
 		if len(args) != 3 {
-			slog.Error("Error: The -set flag requires two arguments.")
+			slog.Error("set requires two arguments")
+			return
 		}
 		key, err := strconv.Atoi(args[1])
 		if err != nil {
-			slog.Error("Error: Invalid key. %v", err)
+			slog.Error("invalid key", "error", err)
+			return
 		}
 		value := args[2]
 		_, err = db.Set(key, value)
 		if err != nil {
-			slog.Error("Error: Failed to set key-value pair. %v", err)
+			slog.Error("failed to set key-value pair", "error", err)
+			return
 		}
-		os.Stdout.WriteString("Key-value pair set successfully.")
+		fmt.Fprint(os.Stdout, "Key-value pair set successfully.")
 	case "get":
 		if len(args) != 2 {
-			slog.Error("Error: The -get flag requires one argument.")
+			slog.Error("get requires one argument")
+			return
 		}
 		key, err := strconv.Atoi(args[1])
 		if err != nil {
-			slog.Error("Error: Invalid key.", err)
+			slog.Error("invalid key", "error", err)
+			return
 		}
 		value, err := db.Get(key)
 		if err != nil {
-			slog.Error("Error: Key not found.", err)
+			slog.Error("key not found", "error", err)
+			return
 		}
-		os.Stdout.WriteString(value)
+		fmt.Fprint(os.Stdout, value)
 	case "help":
 		fmt.Println("Available commands:")
 		fmt.Println("  set <key> <value> - Set a key-value pair")
@@ -55,7 +61,7 @@ func execCommand(db database.Database, command string) {
 	case "exit":
 		os.Exit(0)
 	default:
-		slog.Error("Error: Invalid command.")
+		slog.Error("invalid command")
 		execCommand(db, "help")
 	}
 }
