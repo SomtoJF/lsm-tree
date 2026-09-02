@@ -10,18 +10,23 @@ import (
 type SomtoDB struct {
 	filePath string
 	// maps keys to their corresponding value offsets in the file
-	indexes map[int]int
+	indexes map[int]indexEntry
 	// number of bytes written to the file
 	fileSize int
 	// mutex to protect concurrent access to the database
 	mutex sync.Mutex
 }
 
+type indexEntry struct {
+	offset int
+	length int
+}
+
 func Init(filePath string) *SomtoDB {
 	db := &SomtoDB{}
 	db.filePath = filePath
 	db.fileSize = 0
-	db.indexes = make(map[int]int)
+	db.indexes = make(map[int]indexEntry)
 	return db
 }
 
@@ -39,31 +44,37 @@ func (db *SomtoDB) write(key int, data []byte) error {
 		return err
 	}
 
+	entry := indexEntry{
+		offset: db.fileSize,
+		length: len(data),
+	}
+
 	// store the offset of the value in the file
-	db.indexes[key] = db.fileSize
+	db.indexes[key] = entry
 	// increment the file size
 	db.fileSize += len(data)
 	return nil
 }
 
-func (db *SomtoDB) read(offset int) ([]byte, error) {
-	fileData, err := os.ReadFile(db.filePath)
+func (db *SomtoDB) read(indexData indexEntry) ([]byte, error) {
+	f, err := os.Open(db.filePath)
 	if err != nil {
 		return nil, err
 	}
-	if offset < 0 || offset >= len(fileData) {
-		return nil, fmt.Errorf("offset out of range")
+	defer f.Close()
+
+	_, err = f.Seek(int64(indexData.offset), 0)
+	if err != nil {
+		return nil, err
 	}
 
-	end := offset
-	for end < len(fileData) && fileData[end] != '\n' {
-		end++
-	}
-	if end < len(fileData) && fileData[end] == '\n' {
-		end++
+	data := make([]byte, indexData.length)
+	_, err = f.Read(data)
+	if err != nil {
+		return nil, err
 	}
 
-	return fileData[offset:end], nil
+	return data, nil
 }
 
 func (db *SomtoDB) Set(key int, value string) (string, error) {
@@ -81,12 +92,12 @@ func (db *SomtoDB) Get(key int) (string, error) {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	offset, ok := db.indexes[key]
+	indexData, ok := db.indexes[key]
 	if !ok {
 		return "", fmt.Errorf("key not found")
 	}
 
-	readData, err := db.read(offset)
+	readData, err := db.read(indexData)
 	if err != nil {
 		return "", err
 	}
