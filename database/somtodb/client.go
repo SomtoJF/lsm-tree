@@ -2,7 +2,6 @@ package somtodb
 
 import (
 	"fmt"
-	"log"
 	"os"
 )
 
@@ -18,6 +17,7 @@ func Init(filePath string) *SomtoDB {
 	db := &SomtoDB{}
 	db.filePath = filePath
 	db.fileSize = 0
+	db.indexes = make(map[int]int)
 	return db
 }
 
@@ -33,8 +33,10 @@ func (db *SomtoDB) write(key int, data []byte) error {
 		return err
 	}
 
-	db.fileSize += len(data)
+	// store the offset of the value in the file
 	db.indexes[key] = db.fileSize
+	// increment the file size
+	db.fileSize += len(data)
 	return nil
 }
 
@@ -59,16 +61,15 @@ func (db *SomtoDB) read(offset int) ([]byte, error) {
 	return data, nil
 }
 
-func (db *SomtoDB) Set(key int, value string) string {
+func (db *SomtoDB) Set(key int, value string) (string, error) {
 	// TODO: implement
 	text := fmt.Sprintf("key: %d, value: %s\n", key, value)
 	textbytes := []byte(text)
 	err := db.write(key, textbytes)
 	if err != nil {
-		log.Println(err)
-		return "Error: failed to write to file"
+		return "", err
 	}
-	return text
+	return text, nil
 }
 
 func (db SomtoDB) Get(key int) (string, error) {
