@@ -3,6 +3,7 @@ package somtodb
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 type SomtoDB struct {
@@ -83,5 +84,5 @@ func (db SomtoDB) Get(key int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(readData), nil
+	return strings.TrimPrefix(string(readData), fmt.Sprintf("key: %d, value: ", key)), nil
 }
