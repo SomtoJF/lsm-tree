@@ -2,7 +2,7 @@
 This is a research/descovery project based on the key-value store implementation described in the book "Designing Data-Intensive Applications" by Martin Kleppmann and Michael Greim.
 
 ## Goal
-The goal is to implement a very basic key-value store using an LSM tree with the following features:
+The goal is to implement a very basic key-value store with the following features:
 - Segmentation and Compaction
 - Crash Recovery
 
