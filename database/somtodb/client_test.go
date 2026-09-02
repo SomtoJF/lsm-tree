@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -54,8 +55,11 @@ func generateRandomTestCases(n int) []testCase {
 func TestDatabaseSetsValues(t *testing.T) {
 	// setup
 	filePath := getFilePath()
-	db := Init("testdb.txt")
-	defer clearDBFile(filePath)
+	if err := clearDBFile(filePath); err != nil {
+		// ignore missing file during the first run; the database init will recreate it
+		_ = err
+	}
+	db := Init(filePath)
 
 	testCases := generateRandomTestCases(10)
 	for _, testCase := range testCases {
@@ -79,6 +83,76 @@ func TestDatabaseSetsValues(t *testing.T) {
 
 // TestHelloEmpty calls greetings.Hello with an empty string,
 // checking for an error.
-func TestDatabaseHandlesConcurrency(t *testing.T) {
+func TestDatabaseHandlesConcurrentReads(t *testing.T) {
+	// setup
+	filePath := getFilePath()
+	if err := clearDBFile(filePath); err != nil {
+		// ignore missing file during the first run; the database init will recreate it
+		_ = err
+	}
+	db := Init(filePath)
 
+	testCases := generateRandomTestCases(20)
+	for _, testCase := range testCases {
+		_, err := db.Set(testCase.key, testCase.value)
+		if err != nil {
+			t.Errorf("failed to set key-value pair: %v", err)
+		}
+	}
+
+	wg := sync.WaitGroup{}
+	wg.Add(len(testCases))
+
+	for _, tc := range testCases {
+		go func(tc testCase) {
+			defer wg.Done()
+			value, err := db.Get(tc.key)
+			if err != nil {
+				t.Errorf("failed to get value for key: %v", err)
+			}
+			if value != tc.value {
+				t.Errorf("expected value: %s, got: %s", tc.value, value)
+			}
+		}(tc)
+
+	}
+
+	wg.Wait()
+}
+
+func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
+	// setup
+	filePath := getFilePath()
+	if err := clearDBFile(filePath); err != nil {
+		// ignore missing file during the first run; the database init will recreate it
+		_ = err
+	}
+	db := Init(filePath)
+
+	wg := sync.WaitGroup{}
+	testCases := generateRandomTestCases(20)
+	wg.Add(len(testCases))
+	for _, tc := range testCases {
+		go func(tc testCase) {
+			defer wg.Done()
+			_, err := db.Set(tc.key, tc.value)
+			if err != nil {
+				t.Errorf("failed to set key-value pair: %v", err)
+			}
+		}(tc)
+	}
+
+	wg.Wait()
+
+	for _, tc := range testCases {
+
+		value, err := db.Get(tc.key)
+		if err != nil {
+			t.Errorf("failed to get value for key: %v", err)
+		}
+		if value != tc.value {
+			t.Errorf("expected value: %s, got: %s", tc.value, value)
+		}
+
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 type SomtoDB struct {
@@ -12,6 +13,8 @@ type SomtoDB struct {
 	indexes map[int]int
 	// number of bytes written to the file
 	fileSize int
+	// mutex to protect concurrent access to the database
+	mutex sync.Mutex
 }
 
 func Init(filePath string) *SomtoDB {
@@ -23,6 +26,8 @@ func Init(filePath string) *SomtoDB {
 }
 
 func (db *SomtoDB) write(key int, data []byte) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
 	f, err := os.OpenFile(db.filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
@@ -42,24 +47,23 @@ func (db *SomtoDB) write(key int, data []byte) error {
 }
 
 func (db *SomtoDB) read(offset int) ([]byte, error) {
-	f, err := os.Open(db.filePath)
+	fileData, err := os.ReadFile(db.filePath)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-
-	_, err = f.Seek(int64(offset), 0)
-	if err != nil {
-		return nil, err
+	if offset < 0 || offset >= len(fileData) {
+		return nil, fmt.Errorf("offset out of range")
 	}
 
-	data := make([]byte, 100)
-	_, err = f.Read(data)
-	if err != nil {
-		return nil, err
+	end := offset
+	for end < len(fileData) && fileData[end] != '\n' {
+		end++
+	}
+	if end < len(fileData) && fileData[end] == '\n' {
+		end++
 	}
 
-	return data, nil
+	return fileData[offset:end], nil
 }
 
 func (db *SomtoDB) Set(key int, value string) (string, error) {
@@ -73,8 +77,10 @@ func (db *SomtoDB) Set(key int, value string) (string, error) {
 	return text, nil
 }
 
-func (db SomtoDB) Get(key int) (string, error) {
-	// TODO: implement
+func (db *SomtoDB) Get(key int) (string, error) {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	offset, ok := db.indexes[key]
 	if !ok {
 		return "", fmt.Errorf("key not found")
@@ -84,5 +90,8 @@ func (db SomtoDB) Get(key int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimPrefix(string(readData), fmt.Sprintf("key: %d, value: ", key)), nil
+
+	value := strings.TrimPrefix(string(readData), fmt.Sprintf("key: %d, value: ", key))
+	value = strings.TrimSuffix(value, "\n")
+	return value, nil
 }
