@@ -5,6 +5,7 @@ This is a research/descovery project based on the key-value store implementation
 The goal is to implement a very basic key-value store with the following features:
 - Segmentation and Compaction
 - Crash Recovery
+- Concurrency Control
 
 ## Usage
 To run the program, simply:
