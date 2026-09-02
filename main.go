@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -72,9 +73,21 @@ func main() {
 	for {
 		input, err := rl.Readline()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			// Check if the error is a Ctrl+C (Interrupt) or Ctrl+D (EOF)
+			if err == readline.ErrInterrupt {
+				fmt.Println("\nReceived interrupt signal (Ctrl+C). Exiting...")
+				break // Gracefully break the loop to allow defers to run
+			} else if err == io.EOF {
+				fmt.Println("\nReceived EOF (Ctrl+D). Exiting...")
+				break
+			}
+
+			// Handle other actual errors
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			continue
 		}
 
 		execCommand(db, input)
+
 	}
 }
