@@ -35,7 +35,7 @@ func execCommand(db database.Database, command string) {
 			slog.Error("failed to set key-value pair", "error", err)
 			return
 		}
-		fmt.Fprint(os.Stdout, "Key-value pair set successfully.")
+		fmt.Println("Key-value pair set successfully.")
 	case "get":
 		if len(args) != 2 {
 			slog.Error("get requires one argument")
@@ -51,7 +51,7 @@ func execCommand(db database.Database, command string) {
 			slog.Error("key not found", "error", err)
 			return
 		}
-		fmt.Fprint(os.Stdout, value)
+		fmt.Println(value)
 	case "help":
 		fmt.Println("Available commands:")
 		fmt.Println("  set <key> <value> - Set a key-value pair")

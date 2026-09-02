@@ -15,6 +15,8 @@ type SomtoDB struct {
 	fileSize int
 	// mutex to protect concurrent access to the database
 	mutex sync.Mutex
+	// max segment size in bytes
+	maxSegmentSize int
 }
 
 type indexEntry struct {
@@ -27,6 +29,8 @@ func Init(filePath string) *SomtoDB {
 	db.filePath = filePath
 	db.fileSize = 0
 	db.indexes = make(map[int]indexEntry)
+	// Good impl here would be a couple of mbs but for testing purposes, we can set it to a small value
+	db.maxSegmentSize = 100
 	return db
 }
 
@@ -44,15 +48,17 @@ func (db *SomtoDB) write(key int, data []byte) error {
 		return err
 	}
 
+	dataLength := len(data)
+
 	entry := indexEntry{
 		offset: db.fileSize,
-		length: len(data),
+		length: dataLength,
 	}
 
 	// store the offset of the value in the file
 	db.indexes[key] = entry
 	// increment the file size
-	db.fileSize += len(data)
+	db.fileSize += dataLength
 	return nil
 }
 
@@ -78,7 +84,6 @@ func (db *SomtoDB) read(indexData indexEntry) ([]byte, error) {
 }
 
 func (db *SomtoDB) Set(key int, value string) (string, error) {
-	// TODO: implement
 	text := fmt.Sprintf("key: %d, value: %s\n", key, value)
 	textbytes := []byte(text)
 	err := db.write(key, textbytes)
