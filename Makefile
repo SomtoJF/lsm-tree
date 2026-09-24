@@ -4,6 +4,9 @@ run:
 test:
 	go test -v ./...
 
+test-bench:
+	go test -bench=. -benchmem -v ./...
+
 build:
 	go build -o lsm-tree
 

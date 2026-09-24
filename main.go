@@ -14,7 +14,7 @@ import (
 	"github.com/chzyer/readline"
 )
 
-func execCommand(db database.Database, command string) {
+func execCommand(db database.Database, command string) (shouldExit bool) {
 	input := strings.TrimSuffix(command, "\n")
 	input = strings.TrimSpace(input)
 	args := strings.Split(input, " ")
@@ -22,34 +22,34 @@ func execCommand(db database.Database, command string) {
 	case "set":
 		if len(args) != 3 {
 			slog.Error("set requires two arguments")
-			return
+			return false
 		}
 		key, err := strconv.Atoi(args[1])
 		if err != nil {
 			slog.Error("invalid key", "error", err)
-			return
+			return false
 		}
 		value := args[2]
 		_, err = db.Set(key, value)
 		if err != nil {
 			slog.Error("failed to set key-value pair", "error", err)
-			return
+			return false
 		}
 		fmt.Println("Key-value pair set successfully.")
 	case "get":
 		if len(args) != 2 {
 			slog.Error("get requires one argument")
-			return
+			return false
 		}
 		key, err := strconv.Atoi(args[1])
 		if err != nil {
 			slog.Error("invalid key", "error", err)
-			return
+			return false
 		}
 		value, err := db.Get(key)
 		if err != nil {
 			slog.Error("key not found", "error", err)
-			return
+			return false
 		}
 		fmt.Println(value)
 	case "help":
@@ -59,22 +59,21 @@ func execCommand(db database.Database, command string) {
 		fmt.Println("  help              - Show this help message")
 		fmt.Println("  exit              - Exit the program")
 	case "exit":
-		os.Exit(0)
+		return true
 	default:
 		slog.Error("invalid command")
 		execCommand(db, "help")
 	}
+	return false
 }
 
-func main() {
-	db := initializer.InitDB()
-	log.Println("database initialized")
-	defer db.Close()
+type lineReader interface {
+	Readline() (string, error)
+	Close() error
+}
 
-	rl, err := readline.New("> ")
-	if err != nil {
-		panic(err)
-	}
+func run(db database.Database, rl lineReader) {
+	defer db.Close()
 	defer rl.Close()
 
 	for {
@@ -94,7 +93,20 @@ func main() {
 			continue
 		}
 
-		execCommand(db, input)
-
+		if execCommand(db, input) {
+			return
+		}
 	}
+}
+
+func main() {
+	db := initializer.InitDB()
+	log.Println("database initialized")
+
+	rl, err := readline.New("> ")
+	if err != nil {
+		panic(err)
+	}
+
+	run(db, rl)
 }
