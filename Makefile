@@ -4,8 +4,22 @@ run:
 test:
 	go test -v ./...
 
-test-bench:
-	go test -bench=. -benchmem -v ./...
+BENCHTIME ?= 1s
+COUNT ?= 1
+
+bench-db:
+	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabase' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
+
+bench-db-set:
+	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseSet$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
+
+bench-db-get:
+	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseGet$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
+
+bench-db-parallel:
+	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseParallelGet$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
+
+test-bench: bench-db
 
 build:
 	go build -o lsm-tree

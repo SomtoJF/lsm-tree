@@ -1,4 +1,4 @@
-package somtodb
+package somtodb_test
 
 import (
 	"log"
@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/SomtoJF/lsm-tree/database/somtodb"
 	"github.com/google/uuid"
 )
 
@@ -59,7 +60,7 @@ func TestDatabaseSetsValues(t *testing.T) {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db, err := Init(filePath)
+	db, err := somtodb.Init(filePath)
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db, err := Init(filePath)
+	db, err := somtodb.Init(filePath)
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db, err := Init(filePath)
+	db, err := somtodb.Init(filePath)
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}
