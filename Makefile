@@ -19,6 +19,9 @@ bench-db-get:
 bench-db-parallel:
 	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseParallelGet$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
 
+bench-db-parallel-set:
+	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseParallelSet$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
+
 test-bench: bench-db
 
 build:

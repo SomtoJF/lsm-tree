@@ -3,6 +3,7 @@ package somtodb_test
 import (
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/SomtoJF/lsm-tree/database/somtodb"
@@ -69,6 +70,20 @@ func BenchmarkDatabaseParallelGet(b *testing.B) {
 				b.Errorf("failed to get value: %v", err)
 			}
 			i++
+		}
+	})
+}
+
+func BenchmarkDatabaseParallelSet(b *testing.B) {
+	db := benchmarkDatabase(b)
+	var keyCounter atomic.Int64
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			key := int(keyCounter.Add(1))
+			if _, err := db.Set(key, strconv.Itoa(key)); err != nil {
+				b.Errorf("failed to set value: %v", err)
+			}
 		}
 	})
 }
