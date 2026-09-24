@@ -64,6 +64,8 @@ func TestDatabaseSetsValues(t *testing.T) {
 		t.Errorf("failed to initialize database: %v", err)
 	}
 
+	defer db.Close()
+
 	testCases := generateRandomTestCases(10)
 	for _, testCase := range testCases {
 		_, err := db.Set(testCase.key, testCase.value)
@@ -97,6 +99,8 @@ func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}
+
+	defer db.Close()
 
 	testCases := generateRandomTestCases(20)
 	for _, testCase := range testCases {
@@ -137,6 +141,8 @@ func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}
+
+	defer db.Close()
 
 	wg := sync.WaitGroup{}
 	testCases := generateRandomTestCases(20)

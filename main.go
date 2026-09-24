@@ -69,6 +69,7 @@ func execCommand(db database.Database, command string) {
 func main() {
 	db := initializer.InitDB()
 	log.Println("database initialized")
+	defer db.Close()
 
 	rl, err := readline.New("> ")
 	if err != nil {
