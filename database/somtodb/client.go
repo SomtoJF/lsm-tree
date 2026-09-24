@@ -17,6 +17,8 @@ type SomtoDB struct {
 	mutex sync.Mutex
 	// max segment size in bytes
 	maxSegmentSize int
+	// db file
+	file *os.File
 }
 
 type indexEntry struct {
@@ -24,26 +26,31 @@ type indexEntry struct {
 	length int
 }
 
-func Init(filePath string) *SomtoDB {
+func Init(filePath string) (*SomtoDB, error) {
 	db := &SomtoDB{}
 	db.filePath = filePath
 	db.fileSize = 0
 	db.indexes = make(map[int]indexEntry)
+
+	f, err := os.OpenFile(db.filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, err
+	}
+	db.file = f
 	// Good impl here would be a couple of mbs but for testing purposes, we can set it to a small value
 	db.maxSegmentSize = 100
-	return db
+	return db, nil
+}
+
+func (db *SomtoDB) Close() {
+	db.file.Close()
 }
 
 func (db *SomtoDB) write(key int, data []byte) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
-	f, err := os.OpenFile(db.filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
 
-	_, err = f.Write(data)
+	_, err := db.file.Write(data)
 	if err != nil {
 		return err
 	}

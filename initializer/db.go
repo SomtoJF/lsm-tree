@@ -15,5 +15,10 @@ func InitDB() database.Database {
 		log.Fatal(err)
 	}
 	path1 := filepath.Join(dir, fileName)
-	return database.NewDatabase(path1)
+	database, err := database.NewDatabase(path1)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return database
 }

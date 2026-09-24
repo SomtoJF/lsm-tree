@@ -11,7 +11,7 @@ import (
 )
 
 func getFilePath() string {
-	fileName := "data.txt"
+	fileName := "test_data.txt"
 	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
@@ -59,7 +59,10 @@ func TestDatabaseSetsValues(t *testing.T) {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db := Init(filePath)
+	db, err := Init(filePath)
+	if err != nil {
+		t.Errorf("failed to initialize database: %v", err)
+	}
 
 	testCases := generateRandomTestCases(10)
 	for _, testCase := range testCases {
@@ -90,7 +93,10 @@ func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db := Init(filePath)
+	db, err := Init(filePath)
+	if err != nil {
+		t.Errorf("failed to initialize database: %v", err)
+	}
 
 	testCases := generateRandomTestCases(20)
 	for _, testCase := range testCases {
@@ -127,7 +133,10 @@ func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db := Init(filePath)
+	db, err := Init(filePath)
+	if err != nil {
+		t.Errorf("failed to initialize database: %v", err)
+	}
 
 	wg := sync.WaitGroup{}
 	testCases := generateRandomTestCases(20)

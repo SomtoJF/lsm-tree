@@ -7,6 +7,6 @@ type Database interface {
 	Get(key int) (string, error)
 }
 
-func NewDatabase(filePath string) Database {
+func NewDatabase(filePath string) (Database, error) {
 	return somtodb.Init(filePath)
 }
