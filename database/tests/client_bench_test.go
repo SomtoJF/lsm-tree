@@ -6,12 +6,13 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/SomtoJF/lsm-tree/database"
 	"github.com/SomtoJF/lsm-tree/database/somtodb"
 )
 
 const benchmarkRecordCount = 1000
 
-func benchmarkDatabase(b *testing.B) *somtodb.SomtoDB {
+func benchmarkDatabase(b *testing.B) database.Database {
 	b.Helper()
 
 	db, err := somtodb.Init(filepath.Join(b.TempDir(), "benchmark.db"))
@@ -25,7 +26,7 @@ func benchmarkDatabase(b *testing.B) *somtodb.SomtoDB {
 	return db
 }
 
-func populateBenchmarkDatabase(b *testing.B, db *somtodb.SomtoDB) {
+func populateBenchmarkDatabase(b *testing.B, db database.Database) {
 	b.Helper()
 
 	for i := 0; i < benchmarkRecordCount; i++ {

@@ -32,7 +32,7 @@ func Init(filePath string) (*SomtoDB, error) {
 	db.fileSize = 0
 	db.indexes = make(map[int]indexEntry)
 
-	f, err := os.OpenFile(db.filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(db.filePath, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -70,19 +70,13 @@ func (db *SomtoDB) write(key int, data []byte) error {
 }
 
 func (db *SomtoDB) read(indexData indexEntry) ([]byte, error) {
-	f, err := os.Open(db.filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	_, err = f.Seek(int64(indexData.offset), 0)
+	_, err := db.file.Seek(int64(indexData.offset), 0)
 	if err != nil {
 		return nil, err
 	}
 
 	data := make([]byte, indexData.length)
-	_, err = f.Read(data)
+	_, err = db.file.Read(data)
 	if err != nil {
 		return nil, err
 	}
