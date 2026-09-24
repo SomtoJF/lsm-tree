@@ -88,3 +88,29 @@ func BenchmarkDatabaseParallelSet(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkDatabaseConcurrentReadWrite(b *testing.B) {
+	db := benchmarkDatabase(b)
+	populateBenchmarkDatabase(b, db)
+
+	var operationCounter atomic.Int64
+	var writeKeyCounter atomic.Int64
+
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			operation := operationCounter.Add(1)
+			if operation%2 == 0 {
+				key := int(operation % benchmarkRecordCount)
+				if _, err := db.Get(key); err != nil {
+					b.Errorf("failed to get value: %v", err)
+				}
+				continue
+			}
+
+			key := benchmarkRecordCount + int(writeKeyCounter.Add(1))
+			if _, err := db.Set(key, strconv.Itoa(key)); err != nil {
+				b.Errorf("failed to set value: %v", err)
+			}
+		}
+	})
+}

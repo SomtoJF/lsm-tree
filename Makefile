@@ -22,6 +22,9 @@ bench-db-parallel:
 bench-db-parallel-set:
 	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseParallelSet$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
 
+bench-db-readwrite:
+	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseConcurrentReadWrite$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
+
 test-bench: bench-db
 
 build:
