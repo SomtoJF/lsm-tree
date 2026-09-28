@@ -14,7 +14,7 @@ type SomtoDB struct {
 	// number of bytes written to the file
 	fileSize int
 	// mutex to protect concurrent access to the database
-	mutex sync.RWMutex
+	mutex sync.Mutex
 	// max segment size in bytes
 	maxSegmentSize int
 	// db file
@@ -90,12 +90,9 @@ func (db *SomtoDB) Set(key int, value string) (string, error) {
 }
 
 func (db *SomtoDB) Get(key int) (string, error) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	indexData, ok := db.indexes[key]
-	if !ok {
-		return "", fmt.Errorf("key not found")
+	indexData, err := db.readIndex(key)
+	if err != nil {
+		return "", err
 	}
 
 	readData, err := db.read(indexData)
@@ -106,4 +103,14 @@ func (db *SomtoDB) Get(key int) (string, error) {
 	value := strings.TrimPrefix(string(readData), fmt.Sprintf("key: %d, value: ", key))
 	value = strings.TrimSuffix(value, "\n")
 	return value, nil
+}
+
+func (db *SomtoDB) readIndex(index int) (indexEntry, error) {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+	indexData, ok := db.indexes[index]
+	if !ok {
+		return indexEntry{}, fmt.Errorf("key not found")
+	}
+	return indexData, nil
 }
