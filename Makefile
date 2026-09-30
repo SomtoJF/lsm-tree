@@ -10,6 +10,15 @@ COUNT ?= 1
 bench-db:
 	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabase' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
 
+bench-track:
+	@{ \
+		printf '\n### Test Run: %s (benchtime=%s, count=%s)\n\n```text\n' "$$(date '+%Y-%m-%d %H:%M:%S')" "$(BENCHTIME)" "$(COUNT)"; \
+		go test ./database/tests -run '^$$' -bench '^BenchmarkDatabase' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem; \
+		status=$$?; \
+		printf '\n```\n'; \
+		exit $$status; \
+	} >> BENCHMARKS.md
+
 bench-db-set:
 	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseSet$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
 
@@ -26,6 +35,8 @@ bench-db-readwrite:
 	go test ./database/tests -run '^$$' -bench '^BenchmarkDatabaseConcurrentReadWrite$$' -benchtime=$(BENCHTIME) -count=$(COUNT) -benchmem
 
 test-bench: bench-db
+
+.PHONY: bench-db bench-track
 
 build:
 	go build -o lsm-tree
