@@ -1,5 +1,7 @@
 # LSM
 
+Database currently features $O(1)$ read and write performance, segmentation and compaction to minimize disk usage, and concurrency control to ensure thread safety.
+
 This is a research/descovery project based on the key-value store implementation described in the book "Designing Data-Intensive Applications" by Martin Kleppmann and Michael Greim.
 
 ## Goal
