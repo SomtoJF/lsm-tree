@@ -2,11 +2,14 @@ package somtodb
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
-	"maps"
 	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,170 +45,9 @@ type indexEntry struct {
 	segmentName *string
 }
 
-func Init(dbDir string, dbFileName string) (*SomtoDB, error) {
-	db := &SomtoDB{}
-	db.dbFileName = dbFileName
-	db.fileSize = 0
-	db.currIndexes = make(map[int]indexEntry)
-
-	err := os.MkdirAll(dbDir, 0755)
-	if err != nil {
-		return nil, err
-	}
-
-	f, err := os.OpenFile(db.filePath, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	db.file = f
-
-	segmentCount, segmentDir, err := db.initSegments()
-	if err != nil {
-		return nil, err
-	}
-	db.segmentCount = segmentCount
-	db.segmentDir = segmentDir
-
-	currIndexes, segmentedIndexes, err := db.readIndexes(segmentDir, segmentCount, db.filePath)
-	if err != nil {
-		return nil, err
-	}
-	db.currIndexes = currIndexes
-	db.segementedIndexes = segmentedIndexes
-
-	// Good impl here would be a couple of mbs but for testing purposes, we can set it to a small value
-	db.maxSegmentSize = 100
-	return db, nil
-}
-
-func (db *SomtoDB) readIndexes(segmentDir string, segmentCount int, dbfilePath string) (currIndexes map[int]indexEntry, segmentedIndexes map[int]indexEntry, err error) {
-	currIndexes = make(map[int]indexEntry)
-	segmentedIndexes = make(map[int]indexEntry)
-	// TODO: Read all the indexes from the segments and add to segmented indexes
-	// TODO: read the db file and build current data indexes
-	return currIndexes, segmentedIndexes, nil
-}
-
-func (db *SomtoDB) initSegments() (segmentCount int, segmentDir string, err error) {
-	segmentsDir := db.dbDir + "/segments"
-
-	err = os.MkdirAll(segmentsDir, 0755)
-	if err != nil {
-		return 0, "", err
-	}
-
-	// count .hint files in the segments directory
-	entries, err := os.ReadDir(segmentsDir)
-	if err != nil {
-		return 0, segmentsDir, err
-	}
-
-	count := 0
-	for _, entry := range entries {
-		// Only count files, skip sub-directories
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".hint") {
-			count++
-		}
-	}
-	return count, segmentsDir, nil
-}
-
-func (db *SomtoDB) Close() {
-	db.file.Close()
-}
-
-func (db *SomtoDB) Set(key int, value string) (string, error) {
-	text := fmt.Sprintf("key: %d, value: %s\n", key, value)
-	textbytes := []byte(text)
-	// TODO: if adding this to the filesize would exceed the max segment size, create a new segment
-	// For each segment, (.hint) file, there needs to be a corresponding data file. i.e segments/1.hint and segments/1.txt. hint file contains offsets, sizes of the records in the corresponding data file
-	/**
-	STEPS:
-	1. Check if adding this to the filesize would exceed the max segment size
-	2. If yes, Build new segment from current indexes
-	3. Clear the db file and exec the new write in a new go routine while we run compaction in a new go routine
-	4. In a separate go routine, write the new segment to disk with a filename <segmentCount + 1>.hint
-	*/
-
-	if len(textbytes)+db.fileSize > db.maxSegmentSize {
-		_, err := db.runCompaction()
-		if err != nil {
-			return "", err
-		}
-
-		// Clear the curr db file
-		db.clearCurrentDBFile()
-	}
-
-	// Write to current indexes
-	err := db.write(key, textbytes)
-	if err != nil {
-		return "", err
-	}
-	return text, nil
-}
-
 type compactionResult struct {
 	segmentFileName     string
 	segmentDataFileName string
-}
-
-func (db *SomtoDB) runCompaction() (compactionResult, error) {
-	segmentHintFileName := fmt.Sprintf("%s/%d.hint", db.segmentDir, db.segmentCount+1)
-	segmentHintFile, err := os.Create(segmentHintFileName)
-	if err != nil {
-		return compactionResult{}, err
-	}
-
-	segmentDataFileName := fmt.Sprintf("%s/%d.txt", db.segmentDir, db.segmentCount+1)
-	segmentDataFile, err := os.Create(segmentDataFileName)
-	if err != nil {
-		return compactionResult{}, err
-	}
-
-	db.segmentCount++
-
-	defer segmentHintFile.Close()
-	defer segmentDataFile.Close()
-
-	writer := bufio.NewWriter(segmentHintFile)
-
-	// Compact the current db file into a new segments/<id>.txt file
-	segmentSize := 0
-	segmentIndexes := make(map[int]indexEntry)
-	for key, indexData := range db.currIndexes {
-		newEntry, err := db.appendToSegmentDataFile(segmentDataFile, key, indexData, segmentSize)
-		if err != nil {
-			return compactionResult{}, err
-		}
-
-		newEntry.segmentName = &segmentDataFileName
-
-		hintEntry := hintEntry{
-			Timestamp: uint64(time.Now().Unix()),
-			Key:       uint64(key),
-			Length:    uint32(newEntry.length),
-			Offset:    uint64(newEntry.offset),
-		}
-
-		// Build a new segments/<id>.hint file with the new segment data
-		headerBuf := make([]byte, SEGMENT_HEADER_SIZE)
-		if err := db.appendToSegmentHintFile(writer, hintEntry, headerBuf); err != nil {
-			return compactionResult{}, err
-		}
-
-		segmentIndexes[key] = newEntry
-		segmentSize += indexData.length
-	}
-
-	maps.Copy(db.segementedIndexes, segmentIndexes)
-	return compactionResult{}, nil
-}
-
-func (db *SomtoDB) clearCurrentDBFile() error {
-	db.fileSize = 0
-	db.currIndexes = make(map[int]indexEntry)
-	return os.Truncate(db.filePath, 0)
 }
 
 type hintEntry struct {
@@ -215,74 +57,292 @@ type hintEntry struct {
 	Offset    uint64
 }
 
-func (db *SomtoDB) appendToSegmentHintFile(w io.Writer, entry hintEntry, headerBuf []byte) error {
-
-	// Serialize fixed-width fields into the 22-byte buffer
-	binary.LittleEndian.PutUint64(headerBuf[0:8], entry.Timestamp)
-	binary.LittleEndian.PutUint64(headerBuf[8:16], entry.Key)
-	binary.LittleEndian.PutUint32(headerBuf[16:20], entry.Length)
-	binary.LittleEndian.PutUint64(headerBuf[20:28], entry.Offset)
-
-	// 1. Write the header
-	if _, err := w.Write(headerBuf[:SEGMENT_HEADER_SIZE]); err != nil {
-		return err
+func Init(dbDir string, dbFileName string) (*SomtoDB, error) {
+	if dbDir == "" || dbFileName == "" {
+		return nil, fmt.Errorf("database directory and file name must be provided")
 	}
 
-	// 2. Write the variable-length key
-	// Create an 8-byte buffer
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, entry.Key)
-	if _, err := w.Write(buf); err != nil {
-		return err
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return nil, err
 	}
 
-	return nil
+	filePath := filepath.Join(dbDir, dbFileName)
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, err
+	}
+
+	db := &SomtoDB{
+		dbFileName:        dbFileName,
+		dbDir:             dbDir,
+		filePath:          filePath,
+		currIndexes:       make(map[int]indexEntry),
+		segementedIndexes: make(map[int]indexEntry),
+		file:              f,
+		maxSegmentSize:    100,
+		segmentDir:        filepath.Join(dbDir, "segments"),
+	}
+
+	if err := os.MkdirAll(db.segmentDir, 0755); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+
+	fileInfo, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if fileInfo.Size() > int64(^uint(0)>>1) {
+		_ = f.Close()
+		return nil, fmt.Errorf("active database file is too large for this platform")
+	}
+
+	currIndexes, segmentedIndexes, segmentCount, err := db.readIndexes(db.segmentDir, db.filePath)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	db.currIndexes = currIndexes
+	db.segementedIndexes = segmentedIndexes
+	db.fileSize = int(fileInfo.Size())
+	db.segmentCount = segmentCount
+	return db, nil
 }
 
-func (db *SomtoDB) appendToSegmentDataFile(segmentDataFile *os.File, key int, value indexEntry, oldSegmentSize int) (newEntry indexEntry, err error) {
-	currFile := db.file
-	data := make([]byte, value.length)
-	_, err = currFile.ReadAt(data, int64(value.offset))
+func (db *SomtoDB) readIndexes(segmentDir string, dbFilePath string) (map[int]indexEntry, map[int]indexEntry, int, error) {
+	entries, err := os.ReadDir(segmentDir)
 	if err != nil {
-		return indexEntry{}, err
+		return nil, nil, 0, err
 	}
 
-	_, err = segmentDataFile.Write(data)
-	if err != nil {
-		return indexEntry{}, err
+	segmentIDs := make([]int, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".hint") {
+			continue
+		}
+		idText := strings.TrimSuffix(entry.Name(), ".hint")
+		id, err := strconv.Atoi(idText)
+		if err != nil || id < 1 {
+			return nil, nil, 0, fmt.Errorf("invalid segment hint filename %q", entry.Name())
+		}
+		segmentIDs = append(segmentIDs, id)
 	}
-	return indexEntry{
-		offset: oldSegmentSize,
-		length: value.length,
-	}, nil
+	sort.Ints(segmentIDs)
+
+	segmentedIndexes := make(map[int]indexEntry)
+	for _, id := range segmentIDs {
+		hintPath := filepath.Join(segmentDir, fmt.Sprintf("%d.hint", id))
+		hintData, err := os.ReadFile(hintPath)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("read segment hint %q: %w", hintPath, err)
+		}
+		if len(hintData)%SEGMENT_HEADER_SIZE != 0 {
+			return nil, nil, 0, fmt.Errorf("segment hint %q has a truncated entry", hintPath)
+		}
+
+		dataPath := filepath.Join(segmentDir, fmt.Sprintf("%d.txt", id))
+		dataInfo, err := os.Stat(dataPath)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("stat segment data %q: %w", dataPath, err)
+		}
+		dataSize := uint64(dataInfo.Size())
+
+		for offset := 0; offset < len(hintData); offset += SEGMENT_HEADER_SIZE {
+			entry := hintData[offset : offset+SEGMENT_HEADER_SIZE]
+			rawKey := binary.LittleEndian.Uint64(entry[8:16])
+			key64 := int64(rawKey)
+			key := int(key64)
+			if int64(key) != key64 {
+				return nil, nil, 0, fmt.Errorf("key %d in %q cannot be represented as int", key64, hintPath)
+			}
+
+			length := binary.LittleEndian.Uint32(entry[16:20])
+			dataOffset := binary.LittleEndian.Uint64(entry[20:28])
+			if dataOffset > dataSize || uint64(length) > dataSize-dataOffset {
+				return nil, nil, 0, fmt.Errorf("segment hint %q contains an out-of-range data entry for key %d", hintPath, key)
+			}
+			if dataOffset > uint64(^uint(0)>>1) || uint64(length) > uint64(^uint(0)>>1) {
+				return nil, nil, 0, fmt.Errorf("segment hint %q contains an entry too large for this platform", hintPath)
+			}
+
+			dataFileName := dataPath
+			segmentedIndexes[key] = indexEntry{
+				offset:      int(dataOffset),
+				length:      int(length),
+				segmentName: &dataFileName,
+			}
+		}
+	}
+
+	activeData, err := os.ReadFile(dbFilePath)
+	if err != nil {
+		return nil, nil, 0, fmt.Errorf("read active database file %q: %w", dbFilePath, err)
+	}
+	currIndexes := make(map[int]indexEntry)
+	for recordOffset := 0; recordOffset < len(activeData); {
+		recordEnd := bytes.IndexByte(activeData[recordOffset:], '\n')
+		if recordEnd < 0 {
+			return nil, nil, 0, fmt.Errorf("active database file %q ends with a truncated record", dbFilePath)
+		}
+		recordEnd += recordOffset + 1
+		record := string(activeData[recordOffset:recordEnd])
+		keyText, _, ok := strings.Cut(strings.TrimSuffix(record, "\n"), ", value: ")
+		if !ok || !strings.HasPrefix(keyText, "key: ") {
+			return nil, nil, 0, fmt.Errorf("active database file %q contains a malformed record at offset %d", dbFilePath, recordOffset)
+		}
+		key, err := strconv.Atoi(strings.TrimPrefix(keyText, "key: "))
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("active database file %q contains an invalid key at offset %d: %w", dbFilePath, recordOffset, err)
+		}
+		currIndexes[key] = indexEntry{
+			offset: recordOffset,
+			length: recordEnd - recordOffset,
+		}
+		recordOffset = recordEnd
+	}
+
+	segmentCount := 0
+	if len(segmentIDs) > 0 {
+		segmentCount = segmentIDs[len(segmentIDs)-1]
+	}
+	return currIndexes, segmentedIndexes, segmentCount, nil
 }
 
-func (db *SomtoDB) write(key int, data []byte) error {
+func (db *SomtoDB) Close() {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+	if db.file != nil {
+		_ = db.file.Close()
+		db.file = nil
+	}
+}
+
+func (db *SomtoDB) Set(key int, value string) (string, error) {
+	text := fmt.Sprintf("key: %d, value: %s\n", key, value)
+	textbytes := []byte(text)
+
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
-	_, err := db.file.Write(data)
+	if len(textbytes)+db.fileSize > db.maxSegmentSize {
+		if _, err := db.runCompaction(); err != nil {
+			return "", err
+		}
+		if err := db.clearCurrentDBFile(); err != nil {
+			return "", err
+		}
+	}
+
+	if err := db.writeLocked(key, textbytes); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+func (db *SomtoDB) runCompaction() (compactionResult, error) {
+	if len(db.currIndexes) == 0 {
+		return compactionResult{}, nil
+	}
+
+	db.segmentCount++
+	segmentID := db.segmentCount
+	segmentHintFileName := filepath.Join(db.segmentDir, fmt.Sprintf("%d.hint", segmentID))
+	segmentDataFileName := filepath.Join(db.segmentDir, fmt.Sprintf("%d.txt", segmentID))
+
+	segmentHintFile, err := os.Create(segmentHintFileName)
 	if err != nil {
+		return compactionResult{}, err
+	}
+	defer segmentHintFile.Close()
+
+	segmentDataFile, err := os.Create(segmentDataFileName)
+	if err != nil {
+		return compactionResult{}, err
+	}
+	defer segmentDataFile.Close()
+
+	writer := bufio.NewWriter(segmentHintFile)
+	headerBuf := make([]byte, SEGMENT_HEADER_SIZE)
+	segmentOffset := 0
+	for key, indexData := range db.currIndexes {
+		payload := make([]byte, indexData.length)
+		if _, err := db.file.ReadAt(payload, int64(indexData.offset)); err != nil {
+			return compactionResult{}, err
+		}
+		if _, err := segmentDataFile.Write(payload); err != nil {
+			return compactionResult{}, err
+		}
+
+		newEntry := indexEntry{
+			offset:      segmentOffset,
+			length:      indexData.length,
+			segmentName: &segmentDataFileName,
+		}
+		db.segementedIndexes[key] = newEntry
+
+		hintEntry := hintEntry{
+			Timestamp: uint64(time.Now().UnixNano()),
+			Key:       uint64(key),
+			Length:    uint32(newEntry.length),
+			Offset:    uint64(newEntry.offset),
+		}
+		binary.LittleEndian.PutUint64(headerBuf[0:8], hintEntry.Timestamp)
+		binary.LittleEndian.PutUint64(headerBuf[8:16], hintEntry.Key)
+		binary.LittleEndian.PutUint32(headerBuf[16:20], hintEntry.Length)
+		binary.LittleEndian.PutUint64(headerBuf[20:28], hintEntry.Offset)
+		if _, err := writer.Write(headerBuf[:SEGMENT_HEADER_SIZE]); err != nil {
+			return compactionResult{}, err
+		}
+
+		segmentOffset += indexData.length
+	}
+	if err := writer.Flush(); err != nil {
+		return compactionResult{}, err
+	}
+
+	return compactionResult{
+		segmentFileName:     segmentHintFileName,
+		segmentDataFileName: segmentDataFileName,
+	}, nil
+}
+
+func (db *SomtoDB) clearCurrentDBFile() error {
+	if db.file == nil {
+		return fmt.Errorf("database file is closed")
+	}
+	if _, err := db.file.Seek(0, 0); err != nil {
+		return err
+	}
+	if err := db.file.Truncate(0); err != nil {
+		return err
+	}
+	db.fileSize = 0
+	db.currIndexes = make(map[int]indexEntry)
+	return nil
+}
+
+func (db *SomtoDB) writeLocked(key int, data []byte) error {
+	if _, err := db.file.Seek(0, io.SeekEnd); err != nil {
+		return err
+	}
+	if _, err := db.file.Write(data); err != nil {
 		return err
 	}
 
-	dataLength := len(data)
-
 	entry := indexEntry{
 		offset: db.fileSize,
-		length: dataLength,
+		length: len(data),
 	}
-
-	// store the offset of the value in the file
 	db.currIndexes[key] = entry
-	// increment the file size
-	db.fileSize += dataLength
+	db.fileSize += len(data)
 	return nil
 }
 
 func (db *SomtoDB) Get(key int) (string, error) {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
+
 	indexData, err := db.readIndex(key)
 	if err != nil {
 		return "", err
@@ -299,40 +359,31 @@ func (db *SomtoDB) Get(key int) (string, error) {
 }
 
 func (db *SomtoDB) read(indexData indexEntry) ([]byte, error) {
-	file := db.file
-
+	var file *os.File
 	if indexData.segmentName != nil {
-		segmentFile, err := db.getSegmentFile(*indexData.segmentName)
+		segmentFile, err := os.Open(*indexData.segmentName)
 		if err != nil {
 			return nil, err
 		}
-		file = segmentFile
 		defer segmentFile.Close()
-	}
-	data := make([]byte, indexData.length)
-	_, err := file.ReadAt(data, int64(indexData.offset))
-	if err != nil {
-		return nil, err
+		file = segmentFile
+	} else {
+		file = db.file
 	}
 
+	data := make([]byte, indexData.length)
+	if _, err := file.ReadAt(data, int64(indexData.offset)); err != nil {
+		return nil, err
+	}
 	return data, nil
 }
 
-func (db *SomtoDB) getSegmentFile(segmentName string) (*os.File, error) {
-	f, err := os.OpenFile(segmentName, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
-}
-
 func (db *SomtoDB) readIndex(index int) (indexEntry, error) {
-	indexData, ok := db.currIndexes[index]
-	if !ok {
-		indexData, ok = db.segementedIndexes[index]
-		if !ok {
-			return indexEntry{}, fmt.Errorf("key not found")
-		}
+	if entry, ok := db.currIndexes[index]; ok {
+		return entry, nil
 	}
-	return indexData, nil
+	if entry, ok := db.segementedIndexes[index]; ok {
+		return entry, nil
+	}
+	return indexEntry{}, fmt.Errorf("key not found")
 }

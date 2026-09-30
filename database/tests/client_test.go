@@ -1,9 +1,9 @@
 package somtodb_test
 
 import (
-	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -11,29 +11,10 @@ import (
 	"github.com/google/uuid"
 )
 
-func getFilePaths() (dbDir string, dbFileName string) {
+func getFilePaths(t *testing.T) (dbDir string, dbFileName string) {
+	t.Helper()
 	fileName := "data.txt"
-	dbDirectory := "data"
-	dir, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
-	path1 := filepath.Join(dir, dbDirectory)
-	return path1, fileName
-}
-
-func clearDBFile(filePath string) error {
-	f, err := os.OpenFile(filePath, os.O_TRUNC|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-
-	// write an empty string to the file to clear its contents
-	if err := os.Truncate(filePath, 0); err != nil {
-		return err
-	}
-	defer f.Close()
-	return nil
+	return t.TempDir(), fileName
 }
 
 type testCase struct {
@@ -56,14 +37,10 @@ func generateRandomTestCases(n int) []testCase {
 // for a valid return value.
 func TestDatabaseSetsValues(t *testing.T) {
 	// setup
-	dbDir, fileName := getFilePaths()
-	if err := clearDBFile(filepath.Join(dbDir, fileName)); err != nil {
-		// ignore missing file during the first run; the database init will recreate it
-		_ = err
-	}
+	dbDir, fileName := getFilePaths(t)
 	db, err := somtodb.Init(dbDir, fileName)
 	if err != nil {
-		t.Errorf("failed to initialize database: %v", err)
+		t.Fatalf("failed to initialize database: %v", err)
 	}
 
 	defer db.Close()
@@ -92,14 +69,10 @@ func TestDatabaseSetsValues(t *testing.T) {
 // checking for an error.
 func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 	// setup
-	dbDir, fileName := getFilePaths()
-	if err := clearDBFile(filepath.Join(dbDir, fileName)); err != nil {
-		// ignore missing file during the first run; the database init will recreate it
-		_ = err
-	}
+	dbDir, fileName := getFilePaths(t)
 	db, err := somtodb.Init(dbDir, fileName)
 	if err != nil {
-		t.Errorf("failed to initialize database: %v", err)
+		t.Fatalf("failed to initialize database: %v", err)
 	}
 
 	defer db.Close()
@@ -134,14 +107,10 @@ func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 
 func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 	// setup
-	dbDir, fileName := getFilePaths()
-	if err := clearDBFile(filepath.Join(dbDir, fileName)); err != nil {
-		// ignore missing file during the first run; the database init will recreate it
-		_ = err
-	}
+	dbDir, fileName := getFilePaths(t)
 	db, err := somtodb.Init(dbDir, fileName)
 	if err != nil {
-		t.Errorf("failed to initialize database: %v", err)
+		t.Fatalf("failed to initialize database: %v", err)
 	}
 
 	defer db.Close()
@@ -171,5 +140,205 @@ func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 			t.Errorf("expected value: %s, got: %s", tc.value, value)
 		}
 
+	}
+}
+
+func TestSegmentHintStoresUint64Keys(t *testing.T) {
+	dbDir, fileName := getFilePaths(t)
+	db, err := somtodb.Init(dbDir, fileName)
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+
+	defer db.Close()
+
+	records := make(map[uint64]string)
+	for key := 0; key < 3; key++ {
+		record, err := db.Set(key, "012345678901234567890123456789")
+		if err != nil {
+			t.Fatalf("failed to set key %d: %v", key, err)
+		}
+		records[uint64(key)] = record
+	}
+
+	hintPath := filepath.Join(dbDir, "segments", "1.hint")
+	hint, err := os.ReadFile(hintPath)
+	if err != nil {
+		t.Fatalf("failed to read hint file: %v", err)
+	}
+
+	const headerSize = 28
+	if len(hint) == 0 || len(hint)%headerSize != 0 {
+		t.Fatalf("invalid hint file size: %d", len(hint))
+	}
+	if len(hint)/headerSize != 2 {
+		t.Fatalf("expected 2 hint entries, got %d", len(hint)/headerSize)
+	}
+
+	readUint64 := func(data []byte) uint64 {
+		var value uint64
+		for i := 0; i < 8; i++ {
+			value |= uint64(data[i]) << (8 * i)
+		}
+		return value
+	}
+	readUint32 := func(data []byte) uint32 {
+		var value uint32
+		for i := 0; i < 4; i++ {
+			value |= uint32(data[i]) << (8 * i)
+		}
+		return value
+	}
+
+	dataPath := filepath.Join(dbDir, "segments", "1.txt")
+	segmentData, err := os.ReadFile(dataPath)
+	if err != nil {
+		t.Fatalf("failed to read segment data: %v", err)
+	}
+
+	seen := make(map[uint64]bool)
+	for offset := 0; offset < len(hint); offset += headerSize {
+		entry := hint[offset : offset+headerSize]
+		key := readUint64(entry[8:16])
+		length := readUint32(entry[16:20])
+		dataOffset := readUint64(entry[20:28])
+
+		record, ok := records[key]
+		if !ok {
+			t.Fatalf("unexpected key in hint: %d", key)
+		}
+		if seen[key] {
+			t.Fatalf("duplicate key in hint: %d", key)
+		}
+		seen[key] = true
+
+		if uint32(len(record)) != length {
+			t.Errorf("key %d: expected length %d, got %d", key, len(record), length)
+		}
+		if dataOffset+uint64(length) > uint64(len(segmentData)) {
+			t.Fatalf("key %d: data range exceeds segment file", key)
+		}
+
+		got := segmentData[dataOffset : dataOffset+uint64(length)]
+		expected := []byte(record)
+		if len(got) != len(expected) {
+			t.Fatalf("key %d: expected record length %d, got %d", key, len(expected), len(got))
+		}
+		for i := range expected {
+			if got[i] != expected[i] {
+				t.Fatalf("key %d: segment record differs at byte %d", key, i)
+			}
+		}
+	}
+
+	if len(seen) != 2 {
+		t.Fatalf("expected 2 distinct keys in hint, got %d", len(seen))
+	}
+}
+
+func TestDatabaseRestoresActiveIndexesOnReopen(t *testing.T) {
+	dbDir, fileName := getFilePaths(t)
+	db, err := somtodb.Init(dbDir, fileName)
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+
+	if _, err := db.Set(1, "initial"); err != nil {
+		t.Fatalf("failed to set initial value: %v", err)
+	}
+	if _, err := db.Set(1, "updated"); err != nil {
+		t.Fatalf("failed to update value: %v", err)
+	}
+	if _, err := db.Set(2, "another"); err != nil {
+		t.Fatalf("failed to set second key: %v", err)
+	}
+	db.Close()
+
+	db, err = somtodb.Init(dbDir, fileName)
+	if err != nil {
+		t.Fatalf("failed to reopen database: %v", err)
+	}
+	defer db.Close()
+
+	for key, expected := range map[int]string{1: "updated", 2: "another"} {
+		got, err := db.Get(key)
+		if err != nil {
+			t.Fatalf("failed to get key %d after reopen: %v", key, err)
+		}
+		if got != expected {
+			t.Errorf("key %d: expected %q, got %q", key, expected, got)
+		}
+	}
+}
+
+func TestDatabaseRestoresSegmentIndexesOnReopen(t *testing.T) {
+	dbDir, fileName := getFilePaths(t)
+	db, err := somtodb.Init(dbDir, fileName)
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+
+	oldValue := strings.Repeat("a", 400)
+	middleValue := strings.Repeat("b", 400)
+	newValue := strings.Repeat("c", 400)
+	activeValue := strings.Repeat("d", 400)
+
+	for key, value := range map[int]string{1: oldValue, 2: oldValue, 3: middleValue} {
+		if _, err := db.Set(key, value); err != nil {
+			t.Fatalf("failed to set key %d: %v", key, err)
+		}
+	}
+	if _, err := db.Set(1, newValue); err != nil {
+		t.Fatalf("failed to overwrite segmented key: %v", err)
+	}
+	if _, err := db.Set(4, activeValue); err != nil {
+		t.Fatalf("failed to set active key: %v", err)
+	}
+	db.Close()
+
+	db, err = somtodb.Init(dbDir, fileName)
+	if err != nil {
+		t.Fatalf("failed to reopen database: %v", err)
+	}
+	defer db.Close()
+
+	expectedValues := map[int]string{
+		1: newValue,
+		2: oldValue,
+		3: middleValue,
+		4: activeValue,
+	}
+	for key, expected := range expectedValues {
+		got, err := db.Get(key)
+		if err != nil {
+			t.Fatalf("failed to get key %d after reopen: %v", key, err)
+		}
+		if got != expected {
+			t.Errorf("key %d: recovered value does not match", key)
+		}
+	}
+}
+
+func TestDatabaseRejectsTruncatedHintOnReopen(t *testing.T) {
+	dbDir, fileName := getFilePaths(t)
+	db, err := somtodb.Init(dbDir, fileName)
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+	value := strings.Repeat("x", 400)
+	for key := 1; key <= 3; key++ {
+		if _, err := db.Set(key, value); err != nil {
+			t.Fatalf("failed to set key %d: %v", key, err)
+		}
+	}
+	db.Close()
+
+	hintPath := filepath.Join(dbDir, "segments", "1.hint")
+	if err := os.WriteFile(hintPath, []byte{1}, 0644); err != nil {
+		t.Fatalf("failed to corrupt hint for test: %v", err)
+	}
+	if reopened, err := somtodb.Init(dbDir, fileName); err == nil {
+		reopened.Close()
+		t.Fatal("expected initialization to reject truncated hint")
 	}
 }
