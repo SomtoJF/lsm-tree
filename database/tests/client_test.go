@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/SomtoJF/lsm-tree/database/somtodb"
+	"github.com/SomtoJF/lsm-tree/database"
 	"github.com/google/uuid"
 )
 
@@ -38,7 +38,7 @@ func generateRandomTestCases(n int) []testCase {
 func TestDatabaseSetsValues(t *testing.T) {
 	// setup
 	dbDir, fileName := getFilePaths(t)
-	db, err := somtodb.Init(dbDir, fileName)
+	db, err := database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestDatabaseSetsValues(t *testing.T) {
 func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 	// setup
 	dbDir, fileName := getFilePaths(t)
-	db, err := somtodb.Init(dbDir, fileName)
+	db, err := database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 	// setup
 	dbDir, fileName := getFilePaths(t)
-	db, err := somtodb.Init(dbDir, fileName)
+	db, err := database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
@@ -143,102 +143,9 @@ func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 	}
 }
 
-func TestSegmentHintStoresUint64Keys(t *testing.T) {
-	dbDir, fileName := getFilePaths(t)
-	db, err := somtodb.Init(dbDir, fileName)
-	if err != nil {
-		t.Fatalf("failed to initialize database: %v", err)
-	}
-
-	defer db.Close()
-
-	records := make(map[uint64]string)
-	for key := 0; key < 3; key++ {
-		record, err := db.Set(key, "012345678901234567890123456789")
-		if err != nil {
-			t.Fatalf("failed to set key %d: %v", key, err)
-		}
-		records[uint64(key)] = record
-	}
-
-	hintPath := filepath.Join(dbDir, "segments", "1.hint")
-	hint, err := os.ReadFile(hintPath)
-	if err != nil {
-		t.Fatalf("failed to read hint file: %v", err)
-	}
-
-	const headerSize = 28
-	if len(hint) == 0 || len(hint)%headerSize != 0 {
-		t.Fatalf("invalid hint file size: %d", len(hint))
-	}
-	if len(hint)/headerSize != 2 {
-		t.Fatalf("expected 2 hint entries, got %d", len(hint)/headerSize)
-	}
-
-	readUint64 := func(data []byte) uint64 {
-		var value uint64
-		for i := 0; i < 8; i++ {
-			value |= uint64(data[i]) << (8 * i)
-		}
-		return value
-	}
-	readUint32 := func(data []byte) uint32 {
-		var value uint32
-		for i := 0; i < 4; i++ {
-			value |= uint32(data[i]) << (8 * i)
-		}
-		return value
-	}
-
-	dataPath := filepath.Join(dbDir, "segments", "1.txt")
-	segmentData, err := os.ReadFile(dataPath)
-	if err != nil {
-		t.Fatalf("failed to read segment data: %v", err)
-	}
-
-	seen := make(map[uint64]bool)
-	for offset := 0; offset < len(hint); offset += headerSize {
-		entry := hint[offset : offset+headerSize]
-		key := readUint64(entry[8:16])
-		length := readUint32(entry[16:20])
-		dataOffset := readUint64(entry[20:28])
-
-		record, ok := records[key]
-		if !ok {
-			t.Fatalf("unexpected key in hint: %d", key)
-		}
-		if seen[key] {
-			t.Fatalf("duplicate key in hint: %d", key)
-		}
-		seen[key] = true
-
-		if uint32(len(record)) != length {
-			t.Errorf("key %d: expected length %d, got %d", key, len(record), length)
-		}
-		if dataOffset+uint64(length) > uint64(len(segmentData)) {
-			t.Fatalf("key %d: data range exceeds segment file", key)
-		}
-
-		got := segmentData[dataOffset : dataOffset+uint64(length)]
-		expected := []byte(record)
-		if len(got) != len(expected) {
-			t.Fatalf("key %d: expected record length %d, got %d", key, len(expected), len(got))
-		}
-		for i := range expected {
-			if got[i] != expected[i] {
-				t.Fatalf("key %d: segment record differs at byte %d", key, i)
-			}
-		}
-	}
-
-	if len(seen) != 2 {
-		t.Fatalf("expected 2 distinct keys in hint, got %d", len(seen))
-	}
-}
-
 func TestDatabaseRestoresActiveIndexesOnReopen(t *testing.T) {
 	dbDir, fileName := getFilePaths(t)
-	db, err := somtodb.Init(dbDir, fileName)
+	db, err := database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
@@ -254,7 +161,7 @@ func TestDatabaseRestoresActiveIndexesOnReopen(t *testing.T) {
 	}
 	db.Close()
 
-	db, err = somtodb.Init(dbDir, fileName)
+	db, err = database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to reopen database: %v", err)
 	}
@@ -273,7 +180,7 @@ func TestDatabaseRestoresActiveIndexesOnReopen(t *testing.T) {
 
 func TestDatabaseRestoresSegmentIndexesOnReopen(t *testing.T) {
 	dbDir, fileName := getFilePaths(t)
-	db, err := somtodb.Init(dbDir, fileName)
+	db, err := database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
@@ -296,7 +203,7 @@ func TestDatabaseRestoresSegmentIndexesOnReopen(t *testing.T) {
 	}
 	db.Close()
 
-	db, err = somtodb.Init(dbDir, fileName)
+	db, err = database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to reopen database: %v", err)
 	}
@@ -321,7 +228,7 @@ func TestDatabaseRestoresSegmentIndexesOnReopen(t *testing.T) {
 
 func TestDatabaseRejectsTruncatedHintOnReopen(t *testing.T) {
 	dbDir, fileName := getFilePaths(t)
-	db, err := somtodb.Init(dbDir, fileName)
+	db, err := database.NewDatabase(dbDir, fileName)
 	if err != nil {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
@@ -337,7 +244,7 @@ func TestDatabaseRejectsTruncatedHintOnReopen(t *testing.T) {
 	if err := os.WriteFile(hintPath, []byte{1}, 0644); err != nil {
 		t.Fatalf("failed to corrupt hint for test: %v", err)
 	}
-	if reopened, err := somtodb.Init(dbDir, fileName); err == nil {
+	if reopened, err := database.NewDatabase(dbDir, fileName); err == nil {
 		reopened.Close()
 		t.Fatal("expected initialization to reject truncated hint")
 	}

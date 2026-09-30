@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/SomtoJF/lsm-tree/database"
-	"github.com/SomtoJF/lsm-tree/database/somtodb"
 )
 
 const benchmarkRecordCount = 1000
@@ -14,7 +13,7 @@ const benchmarkRecordCount = 1000
 func benchmarkDatabase(b *testing.B) database.Database {
 	b.Helper()
 
-	db, err := somtodb.Init(b.TempDir(), "benchmark.db")
+	db, err := database.NewDatabase(b.TempDir(), "benchmark.db")
 	if err != nil {
 		b.Fatalf("failed to initialize database: %v", err)
 	}
