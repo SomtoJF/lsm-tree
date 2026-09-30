@@ -8,6 +8,6 @@ type Database interface {
 	Close()
 }
 
-func NewDatabase(filePath string) (Database, error) {
-	return somtodb.Init(filePath)
+func NewDatabase(dbDirectory string, fileName string) (Database, error) {
+	return somtodb.Init(dbDirectory, fileName)
 }

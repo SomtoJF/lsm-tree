@@ -1,7 +1,6 @@
 package somtodb_test
 
 import (
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -15,7 +14,7 @@ const benchmarkRecordCount = 1000
 func benchmarkDatabase(b *testing.B) database.Database {
 	b.Helper()
 
-	db, err := somtodb.Init(filepath.Join(b.TempDir(), "benchmark.db"))
+	db, err := somtodb.Init(b.TempDir(), "benchmark.db")
 	if err != nil {
 		b.Fatalf("failed to initialize database: %v", err)
 	}

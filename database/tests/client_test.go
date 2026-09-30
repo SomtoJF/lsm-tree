@@ -11,14 +11,15 @@ import (
 	"github.com/google/uuid"
 )
 
-func getFilePath() string {
-	fileName := "test_data.txt"
+func getFilePaths() (dbDir string, dbFileName string) {
+	fileName := "data.txt"
+	dbDirectory := "data"
 	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
 	}
-	path1 := filepath.Join(dir, fileName)
-	return path1
+	path1 := filepath.Join(dir, dbDirectory)
+	return path1, fileName
 }
 
 func clearDBFile(filePath string) error {
@@ -55,12 +56,12 @@ func generateRandomTestCases(n int) []testCase {
 // for a valid return value.
 func TestDatabaseSetsValues(t *testing.T) {
 	// setup
-	filePath := getFilePath()
-	if err := clearDBFile(filePath); err != nil {
+	dbDir, fileName := getFilePaths()
+	if err := clearDBFile(filepath.Join(dbDir, fileName)); err != nil {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db, err := somtodb.Init(filePath)
+	db, err := somtodb.Init(dbDir, fileName)
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}
@@ -91,12 +92,12 @@ func TestDatabaseSetsValues(t *testing.T) {
 // checking for an error.
 func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 	// setup
-	filePath := getFilePath()
-	if err := clearDBFile(filePath); err != nil {
+	dbDir, fileName := getFilePaths()
+	if err := clearDBFile(filepath.Join(dbDir, fileName)); err != nil {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db, err := somtodb.Init(filePath)
+	db, err := somtodb.Init(dbDir, fileName)
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}
@@ -133,12 +134,12 @@ func TestDatabaseHandlesConcurrentReads(t *testing.T) {
 
 func TestDatabaseHandlesConcurrentWrites(t *testing.T) {
 	// setup
-	filePath := getFilePath()
-	if err := clearDBFile(filePath); err != nil {
+	dbDir, fileName := getFilePaths()
+	if err := clearDBFile(filepath.Join(dbDir, fileName)); err != nil {
 		// ignore missing file during the first run; the database init will recreate it
 		_ = err
 	}
-	db, err := somtodb.Init(filePath)
+	db, err := somtodb.Init(dbDir, fileName)
 	if err != nil {
 		t.Errorf("failed to initialize database: %v", err)
 	}

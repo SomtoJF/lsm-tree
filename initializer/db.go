@@ -9,13 +9,14 @@ import (
 )
 
 func InitDB() database.Database {
-	fileName := "database/data/data.txt"
+	fileName := "data.txt"
+	dbDirectory := "database/data"
 	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
 	}
-	path1 := filepath.Join(dir, fileName)
-	database, err := database.NewDatabase(path1)
+	path1 := filepath.Join(dir, dbDirectory)
+	database, err := database.NewDatabase(path1, fileName)
 	if err != nil {
 		log.Fatal(err)
 	}
