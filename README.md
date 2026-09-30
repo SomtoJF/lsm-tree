@@ -6,9 +6,13 @@ This is a research/descovery project based on the key-value store implementation
 
 The goal is to implement a very basic key-value store with the following features:
 
-- [ ] Segmentation and Compaction
+- [x] Segmentation and Compaction
 - [ ] Crash Recovery
 - [x] Concurrency Control
+
+# Benchmark Data
+
+View Benchmark Data [here](https://github.com/SomtoJF/lsm-tree/blob/main/BENCHMARKS.md)
 
 ## Usage
 
