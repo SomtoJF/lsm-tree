@@ -79,7 +79,7 @@ func Init(dbDir string, dbFileName string) (*SomtoDB, error) {
 		currIndexes:       make(map[int]indexEntry),
 		segementedIndexes: make(map[int]indexEntry),
 		file:              f,
-		maxSegmentSize:    100,
+		maxSegmentSize:    1024,
 		segmentDir:        filepath.Join(dbDir, "segments"),
 	}
 
