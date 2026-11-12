@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -323,9 +322,6 @@ func (db *SomtoDB) clearCurrentDBFile() error {
 }
 
 func (db *SomtoDB) writeLocked(key int, data []byte) error {
-	if _, err := db.file.Seek(0, io.SeekEnd); err != nil {
-		return err
-	}
 	if _, err := db.file.Write(data); err != nil {
 		return err
 	}
