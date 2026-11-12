@@ -225,6 +225,7 @@ func (db *SomtoDB) Set(key int, value string) (string, error) {
 	defer db.mutex.Unlock()
 
 	if len(textbytes)+db.fileSize > db.maxSegmentSize {
+		// TODO: See how we can make this background process
 		if _, err := db.runCompaction(); err != nil {
 			return "", err
 		}
