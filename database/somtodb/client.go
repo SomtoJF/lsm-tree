@@ -9,8 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -190,8 +188,8 @@ func (db *SomtoDB) readSegmentIndexes(value manifest) (map[int]indexEntry, error
 				_ = dataFile.Close()
 				return nil, fmt.Errorf("segment hint %q contains an out-of-range data entry for key %d", hintPath, key)
 			}
-			payload, nextOffset, err := decodeRecordAt(dataFile, frameOffset, dataInfo.Size())
-			if err != nil || int(nextOffset-frameOffset) != recordHeaderSize+length+recordChecksumSize || len(payload) != length {
+			_, value, nextOffset, err := decodeRecordAt(dataFile, frameOffset, dataInfo.Size())
+			if err != nil || int(nextOffset-frameOffset) != recordHeaderSize+length+recordChecksumSize || len(value) != length {
 				_ = dataFile.Close()
 				return nil, fmt.Errorf("segment %q contains an invalid record for key %d: %w", dataPath, key, err)
 			}
@@ -213,7 +211,7 @@ func (db *SomtoDB) readActiveIndexes() (map[int]indexEntry, int64, error) {
 	indexes := make(map[int]indexEntry)
 	offset := int64(0)
 	for offset < info.Size() {
-		payload, nextOffset, err := decodeRecordAt(db.file, offset, info.Size())
+		key, value, nextOffset, err := decodeRecordAt(db.file, offset, info.Size())
 		if err != nil {
 			if err == io.ErrUnexpectedEOF {
 				return indexes, offset, nil
@@ -223,26 +221,10 @@ func (db *SomtoDB) readActiveIndexes() (map[int]indexEntry, int64, error) {
 			}
 			return nil, 0, fmt.Errorf("active database file %q is corrupt at offset %d: %w", db.filePath, offset, err)
 		}
-		key, err := parseRecordKey(payload)
-		if err != nil {
-			return nil, 0, fmt.Errorf("active database file %q is corrupt at offset %d: %w", db.filePath, offset, err)
-		}
-		indexes[key] = indexEntry{offset: int(offset + recordHeaderSize), length: len(payload)}
+		indexes[key] = indexEntry{offset: int(offset + recordHeaderSize), length: len(value)}
 		offset = nextOffset
 	}
 	return indexes, offset, nil
-}
-
-func parseRecordKey(record []byte) (int, error) {
-	keyText, _, ok := strings.Cut(strings.TrimSuffix(string(record), "\n"), ", value: ")
-	if !ok || !strings.HasPrefix(keyText, "key: ") {
-		return 0, fmt.Errorf("malformed record")
-	}
-	key, err := strconv.Atoi(strings.TrimPrefix(keyText, "key: "))
-	if err != nil {
-		return 0, fmt.Errorf("invalid key: %w", err)
-	}
-	return key, nil
 }
 
 func (db *SomtoDB) Close() {
@@ -265,7 +247,7 @@ func (db *SomtoDB) Close() {
 
 func (db *SomtoDB) Set(key int, value string) (string, error) {
 	text := fmt.Sprintf("key: %d, value: %s\n", key, value)
-	request := &writeRequest{key: key, payload: []byte(text), response: make(chan error, 1)}
+	request := &writeRequest{key: key, payload: []byte(value), response: make(chan error, 1)}
 	db.lifecycle.RLock()
 	if db.closed {
 		db.lifecycle.RUnlock()
@@ -314,7 +296,10 @@ func (db *SomtoDB) commitBatch(batch []*writeRequest) error {
 	defer db.mutex.Unlock()
 	dirty := false
 	for _, request := range batch {
-		frame := encodeRecord(request.payload)
+		frame, err := encodeRecord(request.key, request.payload)
+		if err != nil {
+			return err
+		}
 		if len(frame)+db.fileSize > db.maxSegmentSize {
 			if dirty {
 				if err := db.file.Sync(); err != nil {
@@ -376,7 +361,12 @@ func (db *SomtoDB) runCompaction() (compactionResult, error) {
 			_ = hintFile.Close()
 			return compactionResult{}, err
 		}
-		frame := encodeRecord(payload)
+		frame, err := encodeRecord(key, payload)
+		if err != nil {
+			_ = dataFile.Close()
+			_ = hintFile.Close()
+			return compactionResult{}, err
+		}
 		if _, err := dataFile.Write(frame); err != nil {
 			_ = dataFile.Close()
 			_ = hintFile.Close()
@@ -469,9 +459,7 @@ func (db *SomtoDB) Get(key int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	value := strings.TrimPrefix(string(readData), fmt.Sprintf("key: %d, value: ", key))
-	value = strings.TrimSuffix(value, "\n")
-	return value, nil
+	return string(readData), nil
 }
 
 func (db *SomtoDB) read(indexData indexEntry) ([]byte, error) {

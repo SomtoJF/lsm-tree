@@ -18,11 +18,12 @@ func TestSegmentHintStoresUint64Keys(t *testing.T) {
 
 	records := make(map[uint64]string)
 	for key := 0; key < 3; key++ {
-		record, err := db.Set(key, "012345678901234567890123456789")
+		value := "012345678901234567890123456789"
+		_, err := db.Set(key, value)
 		if err != nil {
 			t.Fatalf("failed to set key %d: %v", key, err)
 		}
-		records[uint64(key)] = record
+		records[uint64(key)] = value
 	}
 
 	hintPath := filepath.Join(dbDir, "segments", "1.hint")
@@ -116,7 +117,10 @@ func TestRecoversChecksumInvalidActiveTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
-	frame := encodeRecord([]byte("key: 2, value: bad\n"))
+	frame, err := encodeRecord(2, []byte("bad"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	frame[len(frame)-1]++
 	file, err := os.OpenFile(filepath.Join(dbDir, "data.db"), os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -174,7 +178,11 @@ func TestRepairCopiesValidRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data[len(encodeRecord([]byte("key: 1, value: one\n")))+recordHeaderSize]++
+	frame, err := encodeRecord(1, []byte("one"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[len(frame)+recordHeaderSize]++
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}

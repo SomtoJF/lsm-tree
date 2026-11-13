@@ -1,11 +1,9 @@
 package somtodb
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Repair copies the latest valid records from a damaged database into a new one.
@@ -41,15 +39,11 @@ func Repair(sourceDir, sourceFileName, targetDir, targetFileName string) error {
 		return err
 	}
 	for offset := int64(0); offset < info.Size(); {
-		payload, nextOffset, err := decodeRecordAt(file, offset, info.Size())
+		key, value, nextOffset, err := decodeRecordAt(file, offset, info.Size())
 		if err != nil || nextOffset == offset || err == io.EOF {
 			break
 		}
-		key, err := parseRecordKey(payload)
-		if err != nil {
-			break
-		}
-		records[key] = payload
+		records[key] = value
 		offset = nextOffset
 	}
 
@@ -59,12 +53,7 @@ func Repair(sourceDir, sourceFileName, targetDir, targetFileName string) error {
 	}
 	defer target.Close()
 	for key, payload := range records {
-		prefix := fmt.Sprintf("key: %d, value: ", key)
-		value := strings.TrimSuffix(strings.TrimPrefix(string(payload), prefix), "\n")
-		if value == string(payload) {
-			return fmt.Errorf("cannot repair malformed record for key %d", key)
-		}
-		if _, err := target.Set(key, value); err != nil {
+		if _, err := target.Set(key, string(payload)); err != nil {
 			return err
 		}
 	}
