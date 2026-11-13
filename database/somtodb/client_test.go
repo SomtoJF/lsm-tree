@@ -14,7 +14,7 @@ func TestSegmentHintStoresUint64Keys(t *testing.T) {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
 	defer db.Close()
-	db.maxSegmentSize = 160
+	db.maxSegmentSize = 100
 
 	records := make(map[uint64]string)
 	for key := 0; key < 3; key++ {
@@ -25,6 +25,7 @@ func TestSegmentHintStoresUint64Keys(t *testing.T) {
 		}
 		records[uint64(key)] = value
 	}
+	db.waitForCompaction()
 
 	hintPath := filepath.Join(dbDir, "segments", "1.hint")
 	hint, err := os.ReadFile(hintPath)

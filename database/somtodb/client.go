@@ -34,6 +34,8 @@ type SomtoDB struct {
 	file           *os.File
 	segmentCount   int
 	segmentDir     string
+	compacting     bool
+	compactionWG   sync.WaitGroup
 
 	writeQueue chan *writeRequest
 	writerDone chan struct{}
@@ -122,6 +124,13 @@ func (db *SomtoDB) loadIndexes() error {
 	if err != nil {
 		return err
 	}
+	pendingIndexes, err := db.readPendingCompactionIndexes()
+	if err != nil {
+		return err
+	}
+	for key, entry := range pendingIndexes {
+		segmentedIndexes[key] = entry
+	}
 	currIndexes, recoveredSize, err := db.readActiveIndexes()
 	if err != nil {
 		return err
@@ -141,6 +150,36 @@ func (db *SomtoDB) loadIndexes() error {
 	}
 	db.fileSize = int(recoveredSize)
 	return nil
+}
+
+func (db *SomtoDB) readPendingCompactionIndexes() (map[int]indexEntry, error) {
+	result := make(map[int]indexEntry)
+	paths, err := filepath.Glob(db.filePath + ".compacting.*")
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range paths {
+		file, err := os.OpenFile(path, os.O_RDWR, 0644)
+		if err != nil {
+			return nil, err
+		}
+		indexes, recoveredSize, err := readFileIndexes(file, path)
+		if err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		if err := file.Truncate(recoveredSize); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
+		_ = file.Close()
+		for key, entry := range indexes {
+			filePath := path
+			entry.segmentName = &filePath
+			result[key] = entry
+		}
+	}
+	return result, nil
 }
 
 func (db *SomtoDB) fileSizeOnDisk() int64 {
@@ -203,15 +242,15 @@ func (db *SomtoDB) readSegmentIndexes(value manifest) (map[int]indexEntry, error
 	return result, nil
 }
 
-func (db *SomtoDB) readActiveIndexes() (map[int]indexEntry, int64, error) {
-	info, err := db.file.Stat()
+func readFileIndexes(file *os.File, filePath string) (map[int]indexEntry, int64, error) {
+	info, err := file.Stat()
 	if err != nil {
 		return nil, 0, err
 	}
 	indexes := make(map[int]indexEntry)
 	offset := int64(0)
 	for offset < info.Size() {
-		key, value, nextOffset, err := decodeRecordAt(db.file, offset, info.Size())
+		key, value, nextOffset, err := decodeRecordAt(file, offset, info.Size())
 		if err != nil {
 			if err == io.ErrUnexpectedEOF {
 				return indexes, offset, nil
@@ -219,12 +258,16 @@ func (db *SomtoDB) readActiveIndexes() (map[int]indexEntry, int64, error) {
 			if errors.Is(err, errRecordChecksum) && nextOffset == info.Size() {
 				return indexes, offset, nil
 			}
-			return nil, 0, fmt.Errorf("active database file %q is corrupt at offset %d: %w", db.filePath, offset, err)
+			return nil, 0, fmt.Errorf("database file %q is corrupt at offset %d: %w", filePath, offset, err)
 		}
 		indexes[key] = indexEntry{offset: int(offset + recordHeaderSize), length: len(value)}
 		offset = nextOffset
 	}
 	return indexes, offset, nil
+}
+
+func (db *SomtoDB) readActiveIndexes() (map[int]indexEntry, int64, error) {
+	return readFileIndexes(db.file, db.filePath)
 }
 
 func (db *SomtoDB) Close() {
@@ -237,12 +280,17 @@ func (db *SomtoDB) Close() {
 	close(db.writeQueue)
 	db.lifecycle.Unlock()
 	<-db.writerDone
+	db.compactionWG.Wait()
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 	if db.file != nil {
 		_ = db.file.Close()
 		db.file = nil
 	}
+}
+
+func (db *SomtoDB) waitForCompaction() {
+	db.compactionWG.Wait()
 }
 
 func (db *SomtoDB) Set(key int, value string) (string, error) {
@@ -293,85 +341,126 @@ func (db *SomtoDB) runWriter() {
 
 func (db *SomtoDB) commitBatch(batch []*writeRequest) error {
 	db.mutex.Lock()
-	defer db.mutex.Unlock()
 	dirty := false
 	for _, request := range batch {
 		frame, err := encodeRecord(request.key, request.payload)
 		if err != nil {
+			db.mutex.Unlock()
 			return err
 		}
-		if len(frame)+db.fileSize > db.maxSegmentSize {
-			if dirty {
-				if err := db.file.Sync(); err != nil {
-					return err
-				}
-				dirty = false
-			}
-			// TODO: move compaction to a background process.
-			if _, err := db.runCompaction(); err != nil {
-				return err
-			}
-			if err := db.clearCurrentDBFile(); err != nil {
-				return err
-			}
-		}
 		if err := db.writeLocked(request.key, request.payload, frame); err != nil {
+			db.mutex.Unlock()
 			return err
 		}
 		dirty = true
 	}
 	if dirty {
 		if err := db.file.Sync(); err != nil {
+			db.mutex.Unlock()
 			return err
 		}
+	}
+	shouldCompact := db.fileSize > db.maxSegmentSize && !db.compacting
+	db.mutex.Unlock()
+	if shouldCompact {
+		db.startCompaction()
 	}
 	return nil
 }
 
-// TODO: Optimize compaction
-func (db *SomtoDB) runCompaction() (compactionResult, error) {
-	if len(db.currIndexes) == 0 {
-		return compactionResult{}, nil
+func (db *SomtoDB) startCompaction() {
+	db.mutex.Lock()
+	if db.compacting || len(db.currIndexes) == 0 || db.fileSize <= db.maxSegmentSize {
+		db.mutex.Unlock()
+		return
 	}
-	db.segmentCount++
-	segmentID := db.segmentCount
+	if err := db.file.Sync(); err != nil {
+		db.mutex.Unlock()
+		return
+	}
+	snapshotPath := fmt.Sprintf("%s.compacting.%d", db.filePath, time.Now().UnixNano())
+	if err := db.file.Close(); err != nil {
+		db.mutex.Unlock()
+		return
+	}
+	if err := os.Rename(db.filePath, snapshotPath); err != nil {
+		db.mutex.Unlock()
+		return
+	}
+	newFile, err := os.OpenFile(db.filePath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	if err != nil {
+		db.mutex.Unlock()
+		return
+	}
+	snapshotIndexes := make(map[int]indexEntry, len(db.currIndexes))
+	for key, entry := range db.currIndexes {
+		entry.segmentName = &snapshotPath
+		snapshotIndexes[key] = entry
+		db.segementedIndexes[key] = entry
+	}
+	db.file = newFile
+	db.fileSize = 0
+	db.currIndexes = make(map[int]indexEntry)
+	db.compacting = true
+	db.compactionWG.Add(1)
+	db.mutex.Unlock()
+
+	go func() {
+		defer db.compactionWG.Done()
+		db.compactSnapshot(snapshotPath, snapshotIndexes)
+	}()
+}
+
+func (db *SomtoDB) compactSnapshot(snapshotPath string, indexes map[int]indexEntry) {
+	segmentID := db.nextSegmentID()
 	dataName := fmt.Sprintf("%d.db", segmentID)
 	hintName := fmt.Sprintf("%d.hint", segmentID)
 	tempDataPath := filepath.Join(db.segmentDir, dataName+".tmp")
 	tempHintPath := filepath.Join(db.segmentDir, hintName+".tmp")
 	dataPath := filepath.Join(db.segmentDir, dataName)
 	hintPath := filepath.Join(db.segmentDir, hintName)
+	sourceFile, err := os.Open(snapshotPath)
+	if err != nil {
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
+	}
+	defer sourceFile.Close()
 	dataFile, err := os.OpenFile(tempDataPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	hintFile, err := os.OpenFile(tempHintPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		_ = dataFile.Close()
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	writer := bufio.NewWriter(hintFile)
 	hash := crc32.NewIEEE()
 	segmentOffset := int64(0)
 	newIndexes := make(map[int]indexEntry)
 	header := make([]byte, SEGMENT_HEADER_SIZE)
-	for key, indexData := range db.currIndexes {
+	for key, indexData := range indexes {
 		payload := make([]byte, indexData.length)
-		if _, err := db.file.ReadAt(payload, int64(indexData.offset)); err != nil {
+		if _, err := sourceFile.ReadAt(payload, int64(indexData.offset)); err != nil {
 			_ = dataFile.Close()
 			_ = hintFile.Close()
-			return compactionResult{}, err
+			db.finishCompaction(snapshotPath, nil, indexes)
+			return
 		}
 		frame, err := encodeRecord(key, payload)
 		if err != nil {
 			_ = dataFile.Close()
 			_ = hintFile.Close()
-			return compactionResult{}, err
+			db.finishCompaction(snapshotPath, nil, indexes)
+			return
 		}
 		if _, err := dataFile.Write(frame); err != nil {
 			_ = dataFile.Close()
 			_ = hintFile.Close()
-			return compactionResult{}, err
+			db.finishCompaction(snapshotPath, nil, indexes)
+			return
 		}
 		_, _ = hash.Write(frame)
 		payloadOffset := segmentOffset + recordHeaderSize
@@ -385,59 +474,81 @@ func (db *SomtoDB) runCompaction() (compactionResult, error) {
 		if _, err := writer.Write(header); err != nil {
 			_ = dataFile.Close()
 			_ = hintFile.Close()
-			return compactionResult{}, err
+			db.finishCompaction(snapshotPath, nil, indexes)
+			return
 		}
 		segmentOffset += int64(len(frame))
 	}
 	if err := writer.Flush(); err != nil {
 		_ = dataFile.Close()
 		_ = hintFile.Close()
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	if err := dataFile.Sync(); err != nil {
 		_ = dataFile.Close()
 		_ = hintFile.Close()
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	if err := hintFile.Sync(); err != nil {
 		_ = dataFile.Close()
 		_ = hintFile.Close()
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	if err := dataFile.Close(); err != nil {
 		_ = hintFile.Close()
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	if err := hintFile.Close(); err != nil {
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	if err := os.Rename(tempDataPath, dataPath); err != nil {
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
 	if err := os.Rename(tempHintPath, hintPath); err != nil {
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, indexes)
+		return
 	}
+	db.mutex.Lock()
 	newSegments := append(append([]manifestSegment(nil), db.segments...), manifestSegment{ID: segmentID, Data: dataName, Hint: hintName, DataSize: segmentOffset, DataCRC: hash.Sum32()})
+	db.mutex.Unlock()
 	if err := publishManifest(db.segmentDir, manifest{Version: manifestVersion, Segments: newSegments}); err != nil {
-		return compactionResult{}, err
+		db.finishCompaction(snapshotPath, nil, nil)
+		return
 	}
-	db.segments = newSegments
-	for key, entry := range newIndexes {
-		db.segementedIndexes[key] = entry
-	}
-	return compactionResult{segmentFileName: hintPath, segmentDataFileName: dataPath}, nil
+	db.finishCompaction(snapshotPath, newSegments, newIndexes)
 }
 
-func (db *SomtoDB) clearCurrentDBFile() error {
-	if db.file == nil {
-		return fmt.Errorf("database file is closed")
+func (db *SomtoDB) nextSegmentID() int {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+	db.segmentCount++
+	return db.segmentCount
+}
+
+func (db *SomtoDB) finishCompaction(snapshotPath string, segments []manifestSegment, indexes map[int]indexEntry) {
+	db.mutex.Lock()
+	if segments != nil {
+		db.segments = segments
+		for key, entry := range indexes {
+			db.segementedIndexes[key] = entry
+		}
+	} else {
+		for key, entry := range indexes {
+			db.segementedIndexes[key] = entry
+		}
 	}
-	if err := db.file.Truncate(0); err != nil {
-		return err
+	if segments != nil && db.file != nil {
+		_ = os.Remove(snapshotPath)
+		_ = syncDirectory(db.dbDir)
 	}
-	db.fileSize = 0
-	db.currIndexes = make(map[int]indexEntry)
-	return nil
+	db.compacting = false
+	db.mutex.Unlock()
 }
 
 func (db *SomtoDB) writeLocked(key int, payload []byte, frame []byte) error {

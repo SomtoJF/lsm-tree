@@ -1,5 +1,32 @@
 # Benchmark Results
 
+## Background Compaction
+
+### Before — 2026-11-13 02:09 (synchronous compaction; previous commit)
+
+```text
+BenchmarkDatabaseSet-8           56  11507365 ns/op   979 B/op   12 allocs/op
+BenchmarkDatabaseParallelSet-8  308   2096078 ns/op  1022 B/op   12 allocs/op
+```
+
+Notes:
+
+- Foreground writes included compaction work while holding the database mutex.
+- Set: ~86.9 ops/s; ParallelSet: ~477.1 ops/s.
+
+### After — 2026-11-13 02:10 (background compaction)
+
+```text
+BenchmarkDatabaseSet-8           50  10270598 ns/op  1260 B/op   16 allocs/op
+BenchmarkDatabaseParallelSet-8  339   1742713 ns/op  1054 B/op   13 allocs/op
+```
+
+Outcome:
+
+- Set improved ~10.7% to ~97.4 ops/s.
+- ParallelSet improved ~16.9% to ~573.8 ops/s.
+- Compaction no longer blocks foreground writes; `fsync` and the 5 ms commit window remain the dominant write costs.
+
 ## Crash Recovery
 
 ### Before — 2026-11-13 00:19:48 (pre-crash-recovery baseline; last run of count=5)
