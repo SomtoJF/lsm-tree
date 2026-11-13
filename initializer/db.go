@@ -9,7 +9,7 @@ import (
 )
 
 func InitDB() database.Database {
-	fileName := "data.txt"
+	fileName := "data.db"
 	dbDirectory := "database/data"
 	dir, err := os.Getwd()
 	if err != nil {

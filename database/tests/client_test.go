@@ -13,7 +13,7 @@ import (
 
 func getFilePaths(t *testing.T) (dbDir string, dbFileName string) {
 	t.Helper()
-	fileName := "data.txt"
+	fileName := "data.db"
 	return t.TempDir(), fileName
 }
 

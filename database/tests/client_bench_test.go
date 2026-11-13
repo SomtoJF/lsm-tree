@@ -93,6 +93,7 @@ func BenchmarkDatabaseConcurrentReadWrite(b *testing.B) {
 
 	var operationCounter atomic.Int64
 	var writeKeyCounter atomic.Int64
+	b.ResetTimer()
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
