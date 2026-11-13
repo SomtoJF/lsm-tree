@@ -349,7 +349,7 @@ func (db *SomtoDB) runCompaction() (compactionResult, error) {
 	}
 	db.segmentCount++
 	segmentID := db.segmentCount
-	dataName := fmt.Sprintf("%d.txt", segmentID)
+	dataName := fmt.Sprintf("%d.db", segmentID)
 	hintName := fmt.Sprintf("%d.hint", segmentID)
 	tempDataPath := filepath.Join(db.segmentDir, dataName+".tmp")
 	tempHintPath := filepath.Join(db.segmentDir, hintName+".tmp")

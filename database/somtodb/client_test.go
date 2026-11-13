@@ -9,7 +9,7 @@ import (
 
 func TestSegmentHintStoresUint64Keys(t *testing.T) {
 	dbDir := t.TempDir()
-	db, err := Init(dbDir, "data.txt")
+	db, err := Init(dbDir, "data.db")
 	if err != nil {
 		t.Fatalf("failed to initialize database: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestSegmentHintStoresUint64Keys(t *testing.T) {
 		t.Fatalf("expected 2 hint entries, got %d", entries)
 	}
 
-	dataPath := filepath.Join(dbDir, "segments", "1.txt")
+	dataPath := filepath.Join(dbDir, "segments", "1.db")
 	segmentData, err := os.ReadFile(dataPath)
 	if err != nil {
 		t.Fatalf("failed to read segment data: %v", err)
