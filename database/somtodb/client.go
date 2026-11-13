@@ -328,6 +328,7 @@ func (db *SomtoDB) commitBatch(batch []*writeRequest) error {
 	return nil
 }
 
+// TODO: Optimize compaction
 func (db *SomtoDB) runCompaction() (compactionResult, error) {
 	if len(db.currIndexes) == 0 {
 		return compactionResult{}, nil
