@@ -11,3 +11,7 @@ type Database interface {
 func NewDatabase(dbDirectory string, fileName string) (Database, error) {
 	return somtodb.Init(dbDirectory, fileName)
 }
+
+func RepairDatabase(sourceDirectory string, sourceFileName string, targetDirectory string, targetFileName string) error {
+	return somtodb.Repair(sourceDirectory, sourceFileName, targetDirectory, targetFileName)
+}
